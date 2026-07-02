@@ -58,11 +58,16 @@ export function SalesPage() {
     const product = products.find(p => p.id === selectedProduct);
     if (!product || !qty) return;
     const quantity = parseInt(qty);
-    if (quantity > product.stock) {
-      setError(`Insufficient stock. Available: ${product.stock}`);
+    if (isNaN(quantity) || quantity <= 0) {
+      setError('Quantity must be a positive number.');
       return;
     }
     const exists = items.findIndex(i => i.product_id === product.id);
+    const existingQty = exists >= 0 ? items[exists].quantity : 0;
+    if (quantity + existingQty > product.stock) {
+      setError(`Insufficient stock. Available: ${product.stock}${existingQty > 0 ? ` (Already in cart: ${existingQty})` : ''}`);
+      return;
+    }
     if (exists >= 0) {
       setItems(prev => prev.map((item, idx) =>
         idx === exists ? { ...item, quantity: item.quantity + quantity } : item
@@ -98,31 +103,75 @@ export function SalesPage() {
     });
 
     if (rpcError) {
-      // Fallback: manual multi-step (no rollback, but functional)
+      console.warn('RPC failed, falling back to client-side transactional updates');
+
+      // 1. Verify latest stock counts from DB to prevent double-deduction race conditions
+      for (const item of items) {
+        const { data: dbProduct, error: fetchErr } = await supabase
+          .from('products')
+          .select('stock, name')
+          .eq('id', item.product_id)
+          .single();
+
+        if (fetchErr || !dbProduct) {
+          setError(`Failed to verify stock count for ${item.product_name}. Check connection.`);
+          setSaving(false);
+          return;
+        }
+
+        if (dbProduct.stock < item.quantity) {
+          setError(`Insufficient stock for ${dbProduct.name}. Latest stock: ${dbProduct.stock}`);
+          setSaving(false);
+          return;
+        }
+      }
+
+      // 2. Insert Parent Sale
       const { data: saleData, error: saleError } = await supabase
         .from('sales')
         .insert({ customer_id: customerId, total_amount: total, notes: notes || null, status: 'completed' })
-        .select().single();
+        .select()
+        .single();
 
       if (saleError || !saleData) {
-        setError(saleError?.message ?? 'Failed to create sale');
+        setError(saleError?.message ?? 'Failed to create sale record.');
         setSaving(false);
         return;
       }
 
+      // 3. Insert Line Items
       const { error: itemsError } = await supabase.from('sale_items').insert(
-        items.map(item => ({ sale_id: saleData.id, product_id: item.product_id, quantity: item.quantity, unit_price: item.unit_price }))
+        items.map(item => ({
+          sale_id: saleData.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+        }))
       );
 
-      if (itemsError) { setError(itemsError.message); setSaving(false); return; }
+      if (itemsError) {
+        setError(itemsError.message);
+        setSaving(false);
+        return;
+      }
 
+      // 4. Update Stock Counts based on latest DB states
       for (const item of items) {
-        const product = products.find(p => p.id === item.product_id);
-        if (product) {
-          await supabase.from('products')
-            .update({ stock: product.stock - item.quantity, updated_at: new Date().toISOString() })
-            .eq('id', item.product_id);
-        }
+        const { data: dbProduct } = await supabase
+          .from('products')
+          .select('stock')
+          .eq('id', item.product_id)
+          .single();
+
+        const latestStock = dbProduct?.stock ?? 0;
+
+        await supabase
+          .from('products')
+          .update({
+            stock: Math.max(0, latestStock - item.quantity),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', item.product_id);
       }
     }
 
@@ -241,7 +290,7 @@ export function SalesPage() {
                     <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
                     <SelectContent>
                       {products.map(p => (
-                        <SelectItem key={p.id} value={p.id} disabled={p.stock === 0}>
+                        <SelectItem key={p.id} value={p.id} disabled={p.stock <= 0}>
                           {p.name} — {formatCurrency(p.price)} (Stock: {p.stock})
                         </SelectItem>
                       ))}

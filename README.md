@@ -224,6 +224,16 @@ p_items        JSONB -- array of objects with product_id, quantity, unit_cost
 
 ---
 
+## 🔒 Concurrency Controls & Stock Safeguards
+
+To prevent negative stock issues and database discrepancies during periods of high traffic, NexusERP implements a multi-tier concurrency control architecture:
+
+1. **Database-Level Constraint**: The `products` table defines a hard check constraint (`stock >= 0`), preventing any database update from pushing inventory numbers into negative values.
+2. **Atomic RPC Transactions (`FOR UPDATE` Locking)**: The `create_sale_with_items` function uses PostgreSQL's row-level locking (`SELECT ... FOR UPDATE`). This blocks other checkout processes trying to modify the same products until the current sale resolves, guaranteeing atomic stock deduction.
+3. **Safe Client-Side Fallback**: If the database RPC is unavailable, the React application falls back to a multi-stage checkout script that verifies the latest real-time stock counts from the database before deducting them, protecting against stale client-side UI states.
+
+---
+
 ## 🛠️ Troubleshooting
 
 > [!NOTE]

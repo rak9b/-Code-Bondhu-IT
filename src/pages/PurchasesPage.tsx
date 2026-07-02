@@ -57,15 +57,26 @@ export function PurchasesPage() {
   function addItem() {
     const product = products.find(p => p.id === selectedProduct);
     if (!product || !qty || !cost) return;
+    const quantity = parseInt(qty);
+    const unitCost = parseFloat(cost);
+    if (isNaN(quantity) || quantity <= 0) {
+      setError('Quantity must be a positive number.');
+      return;
+    }
+    if (isNaN(unitCost) || unitCost < 0) {
+      setError('Unit cost must be a non-negative number.');
+      return;
+    }
     setItems(prev => [...prev, {
       product_id: product.id,
       product_name: product.name,
-      quantity: parseInt(qty),
-      unit_cost: parseFloat(cost),
+      quantity,
+      unit_cost: unitCost,
     }]);
     setSelectedProduct('');
     setQty('1');
     setCost('');
+    setError('');
   }
 
   function removeItem(index: number) {
@@ -79,40 +90,51 @@ export function PurchasesPage() {
     setSaving(true);
     setError('');
 
-    const { data: purchaseData, error: purchaseError } = await supabase
-      .from('purchases')
-      .insert({ supplier_id: supplierId, total_amount: total, notes: notes || null })
-      .select()
-      .single();
+    // Try using RPC (atomic transaction)
+    const { data: purchaseId, error: rpcError } = await supabase.rpc('create_purchase_with_items', {
+      p_supplier_id: supplierId,
+      p_total_amount: total,
+      p_notes: notes || null,
+      p_items: items.map(i => ({ product_id: i.product_id, quantity: i.quantity, unit_cost: i.unit_cost })),
+    });
 
-    if (purchaseError || !purchaseData) {
-      setError(purchaseError?.message ?? 'Failed to create purchase');
-      setSaving(false);
-      return;
-    }
+    if (rpcError) {
+      // Fallback: manual multi-step (no rollback, but functional)
+      const { data: purchaseData, error: purchaseError } = await supabase
+        .from('purchases')
+        .insert({ supplier_id: supplierId, total_amount: total, notes: notes || null })
+        .select()
+        .single();
 
-    // Insert items and update stock
-    const itemInserts = items.map(item => ({
-      purchase_id: purchaseData.id,
-      product_id: item.product_id,
-      quantity: item.quantity,
-      unit_cost: item.unit_cost,
-    }));
+      if (purchaseError || !purchaseData) {
+        setError(purchaseError?.message ?? 'Failed to create purchase');
+        setSaving(false);
+        return;
+      }
 
-    const { error: itemsError } = await supabase.from('purchase_items').insert(itemInserts);
-    if (itemsError) {
-      setError(itemsError.message);
-      setSaving(false);
-      return;
-    }
+      // Insert items and update stock
+      const itemInserts = items.map(item => ({
+        purchase_id: purchaseData.id,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_cost: item.unit_cost,
+      }));
 
-    // Update stock for each product
-    for (const item of items) {
-      const product = products.find(p => p.id === item.product_id);
-      if (product) {
-        await supabase.from('products')
-          .update({ stock: product.stock + item.quantity, updated_at: new Date().toISOString() })
-          .eq('id', item.product_id);
+      const { error: itemsError } = await supabase.from('purchase_items').insert(itemInserts);
+      if (itemsError) {
+        setError(itemsError.message);
+        setSaving(false);
+        return;
+      }
+
+      // Update stock for each product
+      for (const item of items) {
+        const product = products.find(p => p.id === item.product_id);
+        if (product) {
+          await supabase.from('products')
+            .update({ stock: product.stock + item.quantity, updated_at: new Date().toISOString() })
+            .eq('id', item.product_id);
+        }
       }
     }
 
@@ -199,6 +221,11 @@ export function PurchasesPage() {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>New Purchase Order</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
+            {error && (
+              <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-red-400">
+                <AlertCircle className="h-4 w-4" />{error}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Supplier *</Label>

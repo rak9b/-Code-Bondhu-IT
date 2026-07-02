@@ -49,13 +49,12 @@ export function DashboardPage() {
   }
 
   const statCards = [
-    { title: 'Total Revenue', value: formatCurrency(stats.totalRevenue), icon: DollarSign, color: 'bg-green-500/20 text-green-400', sub: 'All-time sales' },
     { title: 'Total Products', value: stats.totalProducts, icon: Package, color: 'bg-blue-500/20 text-blue-400', sub: 'In inventory' },
     { title: 'Customers', value: stats.totalCustomers, icon: Users, color: 'bg-purple-500/20 text-purple-400', sub: 'Registered clients' },
     { title: 'Suppliers', value: stats.totalSuppliers, icon: Truck, color: 'bg-orange-500/20 text-orange-400', sub: 'Active partners' },
-    { title: 'Total Sales', value: stats.totalSales, icon: Receipt, color: 'bg-pink-500/20 text-pink-400', sub: 'Transactions' },
-    { title: 'Total Purchases', value: stats.totalPurchases, icon: ShoppingCart, color: 'bg-cyan-500/20 text-cyan-400', sub: formatCurrency(stats.totalPurchaseAmount) },
-    { title: 'Profit', value: formatCurrency(stats.totalRevenue - stats.totalPurchaseAmount), icon: TrendingUp, color: 'bg-emerald-500/20 text-emerald-400', sub: 'Revenue - Purchases' },
+    { title: 'Purchases', value: stats.totalPurchases, icon: ShoppingCart, color: 'bg-cyan-500/20 text-cyan-400', sub: `Total: ${formatCurrency(stats.totalPurchaseAmount)}` },
+    { title: 'Sales', value: stats.totalSales, icon: Receipt, color: 'bg-pink-500/20 text-pink-400', sub: 'Transactions' },
+    { title: 'Revenue', value: formatCurrency(stats.totalRevenue), icon: DollarSign, color: 'bg-green-500/20 text-green-400', sub: 'All-time earnings' },
   ];
 
   return (
